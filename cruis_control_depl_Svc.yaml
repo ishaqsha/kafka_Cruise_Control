@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cruise-control-ui
+  namespace: kafka-upgrade
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cruise-control-ui
+  template:
+    metadata:
+      labels:
+        app: cruise-control-ui
+    spec:
+      volumes:
+      - name: nginx-config
+        configMap:
+          name: cruise-control-ui-nginx-config
+      containers:
+      - name: cruise-control-ui
+        image: spoud/cruise-control-ui:0.4.0
+        ports:
+        - containerPort: 80
+        env:
+        - name: CC_UI_BACKEND_HOST
+          value: "my-cluster-cruise-control"
+        - name: CC_UI_BACKEND_PORT
+          value: "9090"
+        - name: CC_UI_SERVER_PORT
+          value: "80"
+        - name: CC_UI_KAFKA_CLUSTER_NAME
+          value: "my-cluster"
+        volumeMounts:
+        - name: nginx-config
+          mountPath: /etc/nginx/conf.d/default.conf
+          subPath: cruise-control-ui-nginx.conf
+ #       resources:
+#          requests:
+  #          memory: 256Mi
+   #         cpu: 100m
+    #      limits:
+     #       memory: 512Mi
+      #      cpu: 200m
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cruise-control-ui
+  namespace: kafka-upgrade
+spec:
+  type: ClusterIP
+  selector:
+    app: cruise-control-ui
+  ports:
+  - port: 80
+    targetPort: 80
+
