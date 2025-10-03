@@ -1,0 +1,65 @@
+Step to deploy strimzi kafka cluster with cruise control with nginx-ingress routing and certificates.
+
+Apply a strimzi_0.48.yaml in your aks/eks/ etc
+apply noodpool.yaml
+crete a namespace if you want 
+apply kafka-upgrade.yaml
+apply cruis_control_depl_Svc.yaml
+apply cruis_control_nginx_configmap.yaml
+Lets apply ingress controller
+apply nginx-ingress-deplyment.yaml
+apply nginx-Ingress-Controller-Service
+apply ingress-Service-Account.yaml
+get the External ip of ingress controller using below commnad
+kubectl get service ingress-nginx-controller -n ingress-nginx
+prefered-domain-Ext_IP_Addred.sslip.io(Make sure convert . to - from your ip Ex: it should be cruise-control-20-235-174-214.sslip.io
+│              │            │     │
+│              │            │     └── sslip.io DNS service
+│              │            └──────── Your NGINX Ingress IP (20.235.174.214)
+│              └───────────────────── Dashes replace dots in IP
+└──────────────────────────────────── Your custom subdomain name)
+How sslip.io Works:
+sslip.io is a magic DNS service that:
+
+Resolves any subdomain containing an IP address to that IP
+
+Works with any valid IP format (dots, dashes, or encoded)
+
+No registration required - it's free and automatic
+
+apply IngressClass.yaml
+apply ingress-ClusterRole-RBAC.yaml
+apply ingress-ClusterRoleBinding
+apply ingress-role-rolebind.yaml
+apply nginx-Role-Leader-Election.yaml
+apply iingress-RoleBinding-Leader-Election.yaml
+apply ingress-application.yaml
+
+lets apply the certificates
+apply cert-manager.crds.yaml
+apply cert-manager.yaml
+apply certificate-template.yaml
+apply clusterissuer-letsencrypt-prod.yaml
+apply ingress-with-tls.yaml
+
+If you want to do it using Azure DNS then follow the below steps
+
+# Create DNS Zone
+az network dns zone create \
+  --resource-group RG_AKS_Ishaq \
+  --name your-domain.com
+3. Get Ingress IP and Create DNS Record
+# Get ingress external IP
+INGRESS_IP=$(kubectl get service ingress-nginx-controller -n ingress-nginx -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+
+# Create DNS A record
+az network dns record-set a add-record \
+  --resource-group RG_AKS_Ishaq \
+  --zone-name your-domain.com \
+  --record-set-name cruise-control \
+  --ipv4-address $INGRESS_IP
+
+check it 
+nslookup cruise-control.your-domain.com
+
+apply same host into the ingress-application and certificates file like certificate issue file
