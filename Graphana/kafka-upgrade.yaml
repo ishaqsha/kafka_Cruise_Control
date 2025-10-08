@@ -1,0 +1,148 @@
+apiVersion: kafka.strimzi.io/v1beta2
+kind: Kafka
+metadata:
+  name: my-cluster
+  namespace: kafka-upgrade
+  annotations:
+    strimzi.io/kraft: enabled
+    strimzi.io/node-pools: enabled
+spec:
+  kafka:
+    version: 4.0.0
+    replicas: 2
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+        authentication:
+          type: scram-sha-512
+      - name: tls
+        port: 9093
+        type: internal
+        tls: true
+        authentication:
+          type: tls
+      - name: nonsasl
+        port: 9095
+        type: internal
+        tls: false
+      - name: external
+        port: 9094
+        type: internal
+        tls: false
+        authentication:
+          type: scram-sha-512
+    config:
+      metric.reporters: "com.linkedin.kafka.cruisecontrol.metricsreporter.CruiseControlMetricsReporter"
+      bootstrap.servers: "my-cluster-kafka-bootstrap:9095"
+      cruise.control.metrics.reporter.interval.ms: "30000"
+      cruise.control.metrics.topic.auto.create: "true"
+      cruise.control.metrics.topic.num.partitions: "1"
+      cruise.control.metrics.topic.replication.factor: "1"
+    jmxOptions: {}
+    metricsConfig:
+      type: jmxPrometheusExporter
+      valueFrom:
+        configMapKeyRef:
+          name: kafka-metrics-config
+          key: kafka-metrics-config.yml
+    template:
+      kafkaContainer:
+        env:
+          - name: KAFKA_JMX_OPTS
+            value: "-Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.port=9999"
+          - name: KAFKA_JMX_EXPORTER_ENABLED
+            value: "true"
+    storage:
+      type: ephemeral
+
+  cruiseControl:
+    config:
+      cruise.control.model.complete.cache: "true"
+      cruise.control.self.healing.enabled: "true"
+      webserver.security.enable: "false"
+      webserver.ssl.enable: "false"
+      webserver.http.cors.enabled: "true"
+      webserver.http.cors.origin: "*"
+      partition.metrics.window.ms: 300000
+      two.step.verification.enabled: false
+      bootstrap.servers: "my-cluster-kafka-bootstrap:9095"
+      client.security.protocol: "PLAINTEXT"
+      network.client.max.retries: "5"
+      network.client.retry.backoff.ms: "1000"
+      broker.metrics.window.ms: 300000
+      metric.sampler.class: "com.linkedin.kafka.cruisecontrol.monitor.sampling.CruiseControlMetricsReporterSampler"
+      metric.reporter.cruisecontrol.metrics.reporter.interval.ms: "30000"
+      metric.reporter.cruisecontrol.metrics.topic.auto.create: "true"
+    metricsConfig:
+      type: jmxPrometheusExporter
+      valueFrom:
+        configMapKeyRef:
+          name: cruise-control-metrics-config
+          key: metrics-config.yml
+    template:
+      cruiseControlContainer:
+        env:
+          - name: CRUISE_CONTROL_METRICS_ENABLED
+            value: "true"
+          - name: CRUISE_CONTROL_METRICS_PORT
+            value: "9091"
+
+  entityOperator:
+    topicOperator: {}
+    userOperator: {}
+
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaNodePool
+metadata:
+  name: kafka-pool
+  namespace: kafka-upgrade
+  labels:
+    strimzi.io/cluster: my-cluster
+spec:
+  replicas: 2
+  roles:
+    - broker
+    - controller
+  storage:
+    type: ephemeral
+  resources:
+    requests:
+      memory: 1Gi
+      cpu: 500m
+    limits:
+      memory: 2Gi
+      cpu: 1000m
+---
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaUser
+metadata:
+  name: my-connect-user
+  namespace: kafka-upgrade
+  labels:
+    strimzi.io/cluster: my-cluster
+spec:
+  authentication:
+    type: scram-sha-512
+    password:
+      valueFrom:
+        secretKeyRef:
+          name: kafka-init-user
+          key: password
+  authorization:
+    type: simple
+    acls:
+      - resource:
+          type: topic
+          name: "*"
+          patternType: literal
+        operations: ["All"]
+        host: "*"
+      - resource:
+          type: group
+          name: "*"
+          patternType: literal
+        operations: ["All"]
+        host: "*"
