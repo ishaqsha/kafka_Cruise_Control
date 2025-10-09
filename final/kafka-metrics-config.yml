@@ -1,0 +1,66 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-metrics-config
+  namespace: kafka-upgrade
+data:
+  kafka-metrics-config.yml: |
+    lowercaseOutputName: true
+    rules:
+      # -------------------------------
+      # Kafka Broker Metrics (Essential Only)
+      # -------------------------------
+      # Broker topic metrics (BytesIn/BytesOut/MessagesIn)
+      - pattern: "kafka.server<type=(BrokerTopicMetrics), name=(BytesInPerSec|BytesOutPerSec|MessagesInPerSec), topic=(.+)><>Value"
+        name: "kafka_server_$2"
+        labels:
+          topic: "$3"
+
+      # Under-replicated partitions (per broker)
+      - pattern: "kafka.server<type=(ReplicaManager), name=(UnderReplicatedPartitions)><>Value"
+        name: "kafka_server_$2"
+
+      # Request metrics (totals only)
+      - pattern: "kafka.network<type=Request, name=(.+)><>Count"
+        name: "kafka_network_request_$1_count"
+
+      - pattern: "kafka.network<type=Request, name=(.+)><>Value"
+        name: "kafka_network_request_$1"
+
+      # Controller metrics
+      - pattern: "kafka.controller<type=(.+), name=(.+)><>Value"
+        name: "kafka_controller_$1_$2"
+
+      - pattern: "kafka.controller<type=(.+), name=(.+)><>Count"
+        name: "kafka_controller_$1_$2_count"
+
+      # Coordinator metrics
+      - pattern: "kafka.coordinator<type=(.+), name=(.+)><>Value"
+        name: "kafka_coordinator_$1_$2"
+
+      - pattern: "kafka.coordinator<type=(.+), name=(.+)><>Count"
+        name: "kafka_coordinator_$1_$2_count"
+
+      # Producer metrics (per-topic only)
+      - pattern: "kafka.producer<type=(.+), name=(.+), topic=(.+)><>Value"
+        name: "kafka_producer_$2"
+        labels:
+          topic: "$3"
+
+      # Cluster metrics
+      - pattern: "kafka.cluster<type=(.+), name=(.+)><>Value"
+        name: "kafka_cluster_$1_$2"
+
+      - pattern: "kafka.cluster<type=(.+), name=(.+)><>Count"
+        name: "kafka_cluster_$1_$2_count"
+
+      # Log metrics (optional, can comment out to reduce metrics further)
+      - pattern: "kafka.log<type=Log, name=(.+), topic=(.+), partition=(.+)><>Value"
+        name: "kafka_log_$1"
+        labels:
+          topic: "$2"
+
+      - pattern: "kafka.log<type=Log, name=(.+), topic=(.+), partition=(.+)><>Count"
+        name: "kafka_log_$1_count"
+        labels:
+          topic: "$2"

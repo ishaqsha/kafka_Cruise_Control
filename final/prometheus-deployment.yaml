@@ -1,0 +1,101 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: kafka-upgrade
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    scrape_configs:
+    - job_name: 'cruise-control'
+      static_configs:
+      - targets: ['cruise-control-metrics:9404']
+      scrape_interval: 30s
+      metrics_path: '/metrics'
+
+    - job_name: 'kafka-brokers'
+      kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+              - kafka-upgrade
+      relabel_configs:
+        # Keep only Kafka broker pods
+        - source_labels: [__meta_kubernetes_pod_label_strimzi_io_name]
+          action: keep
+          regex: my-cluster-kafka
+        # Keep only the port for metrics (9404)
+        - source_labels: [__meta_kubernetes_pod_container_port_number]
+          action: keep
+          regex: 9404
+        # Set the address to pod IP + port
+        - source_labels: [__meta_kubernetes_pod_ip, __meta_kubernetes_pod_container_port_number]
+          action: replace
+          target_label: __address__
+          regex: (.+);(.+)
+          replacement: $1:$2
+        # Set metrics path
+        - source_labels: [__meta_kubernetes_pod_container_port_name]
+          action: replace
+          target_label: __metrics_path__
+          replacement: /metrics
+        # Add pod_name label
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: pod_name
+        # Add cluster label
+        - source_labels: [__meta_kubernetes_pod_label_strimzi_io_cluster]
+          action: replace
+          target_label: cluster
+      scrape_interval: 30s
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: kafka-upgrade
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      serviceAccountName: prometheus  # ← ADD THIS LINE
+      containers:
+      - name: prometheus
+        image: prom/prometheus:latest
+        ports:
+        - containerPort: 9090
+        volumeMounts:
+        - name: prometheus-config
+          mountPath: /etc/prometheus/
+        - name: prometheus-data
+          mountPath: /prometheus
+      volumes:
+      - name: prometheus-config
+        configMap:
+          name: prometheus-config
+      - name: prometheus-data
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-service
+  namespace: kafka-upgrade
+spec:
+  selector:
+    app: prometheus
+  ports:
+  - name: web
+    port: 9090
+    targetPort: 9090
+  type: ClusterIP
