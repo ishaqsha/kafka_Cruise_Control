@@ -8,49 +8,180 @@ data:
     global:
       scrape_interval: 15s
       evaluation_interval: 15s
-
+      external_labels:
+        cluster: 'kafka-upgrade'
+        environment: 'production'
+    
+    # Alertmanager configuration (optional)
+    # alerting:
+    #   alertmanagers:
+    #     - static_configs:
+    #         - targets: ['alertmanager:9093']
+    
     scrape_configs:
-    - job_name: 'cruise-control'
-      static_configs:
-      - targets: ['cruise-control-metrics:9404']
-      scrape_interval: 30s
-      metrics_path: '/metrics'
+      # =================================
+      # CRUISE CONTROL METRICS
+      # =================================
+      - job_name: 'cruise-control'
+        scrape_interval: 30s
+        scrape_timeout: 10s
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['cruise-control-metrics:9404']
+            labels:
+              service: 'cruise-control'
+              component: 'cruise-control'
+        # Optional: Add relabeling for better organization
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: instance
+          - source_labels: [__address__]
+            regex: '([^:]+):.*'
+            target_label: hostname
+            replacement: '$1'
+      
+      # =================================
+      # KAFKA BROKER METRICS
+      # =================================
+      - job_name: 'kafka-brokers'
+        scrape_interval: 15s
+        scrape_timeout: 10s
+        metrics_path: /metrics
+        static_configs:
+          - targets:
+              - 'my-cluster-kafka-pool-0.my-cluster-kafka-brokers.kafka-upgrade.svc.cluster.local:9404'
+              - 'my-cluster-kafka-pool-1.my-cluster-kafka-brokers.kafka-upgrade.svc.cluster.local:9404'
+            labels:
+              service: 'kafka'
+              component: 'broker'
+              cluster: 'my-cluster'
+        # Add broker ID as label
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: instance
+          - source_labels: [__address__]
+            regex: 'my-cluster-kafka-pool-([0-9]+)\..*'
+            target_label: broker_id
+            replacement: '$1'
+          - source_labels: [__address__]
+            regex: '([^:]+):.*'
+            target_label: hostname
+            replacement: '$1'
+      
+      # =================================
+      # KAFKA KRAFT CONTROLLER METRICS (KRaft mode)
+      # =================================
+      - job_name: 'kafka-controllers'
+        scrape_interval: 30s
+        scrape_timeout: 10s
+        metrics_path: /metrics
+        static_configs:
+          - targets:
+              - 'my-cluster-kafka-pool-0.my-cluster-kafka-brokers.kafka-upgrade.svc.cluster.local:9404'
+              - 'my-cluster-kafka-pool-1.my-cluster-kafka-brokers.kafka-upgrade.svc.cluster.local:9404'
+            labels:
+              service: 'kafka'
+              component: 'controller'
+              cluster: 'my-cluster'
+              mode: 'kraft'
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: instance
+          - source_labels: [__address__]
+            regex: 'my-cluster-kafka-pool-([0-9]+)\..*'
+            target_label: controller_id
+            replacement: '$1'
+      
+      # =================================
+      # KAFKA EXPORTER (Optional - for consumer lag)
+      # =================================
+      - job_name: 'kafka-exporter'
+        scrape_interval: 30s
+        scrape_timeout: 10s
+        metrics_path: /metrics
+        static_configs:
+          - targets: ['kafka-exporter:9308']
+            labels:
+              service: 'kafka-exporter'
+              component: 'monitoring'
+      
+      # =================================
+      # STRIMZI CLUSTER OPERATOR (if using Strimzi)
+      # =================================
+      - job_name: 'strimzi-cluster-operator'
+        scrape_interval: 30s
+        scrape_timeout: 10s
+        metrics_path: /metrics
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - kafka-upgrade
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_name]
+            action: keep
+            regex: strimzi-cluster-operator
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            action: keep
+            regex: http
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+      
+      # =================================
+      # PROMETHEUS SELF-MONITORING
+      # =================================
+      - job_name: 'prometheus'
+        scrape_interval: 30s
+        static_configs:
+          - targets: ['localhost:9090']
+            labels:
+              service: 'prometheus'
+              component: 'monitoring'
 
-    - job_name: 'kafka-brokers'
-      kubernetes_sd_configs:
-        - role: pod
-          namespaces:
-            names:
-              - kafka-upgrade
-      relabel_configs:
-        # Keep only Kafka broker pods
-        - source_labels: [__meta_kubernetes_pod_label_strimzi_io_name]
-          action: keep
-          regex: my-cluster-kafka
-        # Keep only the port for metrics (9404)
-        - source_labels: [__meta_kubernetes_pod_container_port_number]
-          action: keep
-          regex: 9404
-        # Set the address to pod IP + port
-        - source_labels: [__meta_kubernetes_pod_ip, __meta_kubernetes_pod_container_port_number]
-          action: replace
-          target_label: __address__
-          regex: (.+);(.+)
-          replacement: $1:$2
-        # Set metrics path
-        - source_labels: [__meta_kubernetes_pod_container_port_name]
-          action: replace
-          target_label: __metrics_path__
-          replacement: /metrics
-        # Add pod_name label
-        - source_labels: [__meta_kubernetes_pod_name]
-          action: replace
-          target_label: pod_name
-        # Add cluster label
-        - source_labels: [__meta_kubernetes_pod_label_strimzi_io_cluster]
-          action: replace
-          target_label: cluster
-      scrape_interval: 30s
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: kafka-upgrade
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - nodes/proxy
+      - services
+      - endpoints
+      - pods
+    verbs: ["get", "list", "watch"]
+  - apiGroups:
+      - extensions
+    resources:
+      - ingresses
+    verbs: ["get", "list", "watch"]
+  - nonResourceURLs: ["/metrics"]
+    verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus
+subjects:
+  - kind: ServiceAccount
+    name: prometheus
+    namespace: kafka-upgrade
 
 ---
 apiVersion: apps/v1
@@ -58,6 +189,8 @@ kind: Deployment
 metadata:
   name: prometheus
   namespace: kafka-upgrade
+  labels:
+    app: prometheus
 spec:
   replicas: 1
   selector:
@@ -68,34 +201,136 @@ spec:
       labels:
         app: prometheus
     spec:
-      serviceAccountName: prometheus  # ← ADD THIS LINE
+      serviceAccountName: prometheus
+      securityContext:
+        fsGroup: 65534
+        runAsNonRoot: true
+        runAsUser: 65534
       containers:
-      - name: prometheus
-        image: prom/prometheus:latest
-        ports:
-        - containerPort: 9090
-        volumeMounts:
-        - name: prometheus-config
-          mountPath: /etc/prometheus/
-        - name: prometheus-data
-          mountPath: /prometheus
+        - name: prometheus
+          image: prom/prometheus:v2.48.0
+          args:
+            - '--config.file=/etc/prometheus/prometheus.yml'
+            - '--storage.tsdb.path=/prometheus'
+            - '--storage.tsdb.retention.time=15d'
+            - '--storage.tsdb.retention.size=50GB'
+            - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+            - '--web.console.templates=/usr/share/prometheus/consoles'
+            - '--web.enable-lifecycle'
+            - '--web.enable-admin-api'
+          ports:
+            - name: web
+              containerPort: 9090
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: 9090
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: 9090
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              cpu: 2000m
+              memory: 8Gi
+          volumeMounts:
+            - name: prometheus-config
+              mountPath: /etc/prometheus
+              readOnly: true
+            - name: prometheus-data
+              mountPath: /prometheus
       volumes:
-      - name: prometheus-config
-        configMap:
-          name: prometheus-config
-      - name: prometheus-data
-        emptyDir: {}
+        - name: prometheus-config
+          configMap:
+            name: prometheus-config
+            defaultMode: 420
+        - name: prometheus-data
+          persistentVolumeClaim:
+            claimName: prometheus-data
+      # Optional: Add node affinity for better scheduling
+      # affinity:
+      #   podAntiAffinity:
+      #     preferredDuringSchedulingIgnoredDuringExecution:
+      #       - weight: 100
+      #         podAffinityTerm:
+      #           labelSelector:
+      #             matchExpressions:
+      #               - key: app
+      #                 operator: In
+      #                 values:
+      #                   - prometheus
+      #           topologyKey: kubernetes.io/hostname
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-data
+  namespace: kafka-upgrade
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Gi
+  # Optional: Specify storage class
+  # storageClassName: fast-ssd
+
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: prometheus-service
   namespace: kafka-upgrade
+  labels:
+    app: prometheus
 spec:
+  type: ClusterIP
   selector:
     app: prometheus
   ports:
-  - name: web
-    port: 9090
-    targetPort: 9090
-  type: ClusterIP
+    - name: web
+      port: 9090
+      targetPort: 9090
+      protocol: TCP
+  sessionAffinity: ClientIP
+
+---
+# Optional: Ingress for external access
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: prometheus-ingress
+#   namespace: kafka-upgrade
+#   annotations:
+#     nginx.ingress.kubernetes.io/rewrite-target: /
+#     # cert-manager.io/cluster-issuer: letsencrypt-prod
+# spec:
+#   ingressClassName: nginx
+#   rules:
+#     - host: prometheus.yourdomain.com
+#       http:
+#         paths:
+#           - path: /
+#             pathType: Prefix
+#             backend:
+#               service:
+#                 name: prometheus-service
+#                 port:
+#                   number: 9090
+#   # tls:
+#   #   - hosts:
+#   #       - prometheus.yourdomain.com
+#   #     secretName: prometheus-tls

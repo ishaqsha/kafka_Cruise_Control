@@ -6,61 +6,246 @@ metadata:
 data:
   kafka-metrics-config.yml: |
     lowercaseOutputName: true
+    lowercaseOutputLabelNames: true
+    
     rules:
-      # -------------------------------
-      # Kafka Broker Metrics (Essential Only)
-      # -------------------------------
-      # Broker topic metrics (BytesIn/BytesOut/MessagesIn)
-      - pattern: "kafka.server<type=(BrokerTopicMetrics), name=(BytesInPerSec|BytesOutPerSec|MessagesInPerSec), topic=(.+)><>Value"
-        name: "kafka_server_$2"
-        labels:
-          topic: "$3"
-
-      # Under-replicated partitions (per broker)
-      - pattern: "kafka.server<type=(ReplicaManager), name=(UnderReplicatedPartitions)><>Value"
-        name: "kafka_server_$2"
-
-      # Request metrics (totals only)
-      - pattern: "kafka.network<type=Request, name=(.+)><>Count"
-        name: "kafka_network_request_$1_count"
-
-      - pattern: "kafka.network<type=Request, name=(.+)><>Value"
-        name: "kafka_network_request_$1"
-
-      # Controller metrics
-      - pattern: "kafka.controller<type=(.+), name=(.+)><>Value"
-        name: "kafka_controller_$1_$2"
-
-      - pattern: "kafka.controller<type=(.+), name=(.+)><>Count"
-        name: "kafka_controller_$1_$2_count"
-
-      # Coordinator metrics
-      - pattern: "kafka.coordinator<type=(.+), name=(.+)><>Value"
-        name: "kafka_coordinator_$1_$2"
-
-      - pattern: "kafka.coordinator<type=(.+), name=(.+)><>Count"
-        name: "kafka_coordinator_$1_$2_count"
-
-      # Producer metrics (per-topic only)
-      - pattern: "kafka.producer<type=(.+), name=(.+), topic=(.+)><>Value"
-        name: "kafka_producer_$2"
-        labels:
-          topic: "$3"
-
-      # Cluster metrics
-      - pattern: "kafka.cluster<type=(.+), name=(.+)><>Value"
-        name: "kafka_cluster_$1_$2"
-
-      - pattern: "kafka.cluster<type=(.+), name=(.+)><>Count"
-        name: "kafka_cluster_$1_$2_count"
-
-      # Log metrics (optional, can comment out to reduce metrics further)
-      - pattern: "kafka.log<type=Log, name=(.+), topic=(.+), partition=(.+)><>Value"
-        name: "kafka_log_$1"
+      # ====================
+      # BROKER TOPIC METRICS
+      # ====================
+      
+      # Per-topic broker metrics
+      - pattern: kafka.server<type=BrokerTopicMetrics, name=(BytesInPerSec|BytesOutPerSec|MessagesInPerSec|TotalProduceRequestsPerSec|TotalFetchRequestsPerSec|FailedProduceRequestsPerSec|FailedFetchRequestsPerSec), topic=(.+)><>(Count|OneMinuteRate|FiveMinuteRate|FifteenMinuteRate|MeanRate)
+        name: kafka_server_brokertopicmetrics_$1_$3
+        type: GAUGE
         labels:
           topic: "$2"
-
-      - pattern: "kafka.log<type=Log, name=(.+), topic=(.+), partition=(.+)><>Count"
-        name: "kafka_log_$1_count"
+      
+      # Aggregate broker topic metrics (all topics)
+      - pattern: kafka.server<type=BrokerTopicMetrics, name=(.+)><>(Count|OneMinuteRate|FiveMinuteRate|FifteenMinuteRate|MeanRate)
+        name: kafka_server_brokertopicmetrics_$1_$2
+        type: GAUGE
+      
+      # ====================
+      # REQUEST METRICS
+      # ====================
+      
+      # Request handler metrics
+      - pattern: kafka.network<type=RequestMetrics, name=RequestsPerSec, request=(.+), version=([0-9]+)><>(Count|OneMinuteRate|FiveMinuteRate|FifteenMinuteRate|MeanRate)
+        name: kafka_network_requestmetrics_requestspersec_$3
+        type: GAUGE
+        labels:
+          request: "$1"
+          version: "$2"
+      
+      # Request latency metrics
+      - pattern: kafka.network<type=RequestMetrics, name=(LocalTimeMs|RemoteTimeMs|ThrottleTimeMs|RequestQueueTimeMs|ResponseQueueTimeMs|ResponseSendTimeMs|TotalTimeMs), request=(.+)><>(Mean|Min|Max|50thPercentile|75thPercentile|95thPercentile|98thPercentile|99thPercentile|999thPercentile)
+        name: kafka_network_requestmetrics_$1_$3
+        type: GAUGE
+        labels:
+          request: "$2"
+      
+      # Request size metrics
+      - pattern: kafka.network<type=RequestMetrics, name=(RequestBytes|ResponseBytes), request=(.+)><>(Mean|Min|Max|50thPercentile|75thPercentile|95thPercentile|98thPercentile|99thPercentile)
+        name: kafka_network_requestmetrics_$1_$3
+        type: GAUGE
+        labels:
+          request: "$2"
+      
+      # ====================
+      # REPLICA MANAGER
+      # ====================
+      
+      - pattern: kafka.server<type=ReplicaManager, name=(.+)><>(Value|OneMinuteRate|FiveMinuteRate|FifteenMinuteRate|MeanRate|Mean|Max|Min)
+        name: kafka_server_replicamanager_$1_$2
+        type: GAUGE
+      
+      # ====================
+      # REPLICA FETCHER MANAGER
+      # ====================
+      
+      - pattern: kafka.server<type=ReplicaFetcherManager, name=(.+), clientId=(.+)><>(Value|OneMinuteRate|FiveMinuteRate|FifteenMinuteRate|MeanRate)
+        name: kafka_server_replicafetchermanager_$1_$3
+        type: GAUGE
+        labels:
+          client_id: "$2"
+      
+      # ====================
+      # CONTROLLER METRICS
+      # ====================
+      
+      - pattern: kafka.controller<type=KafkaController, name=(.+)><>(Value|OneMinuteRate|FiveMinuteRate|FifteenMinuteRate|MeanRate)
+        name: kafka_controller_kafkacontroller_$1_$2
+        type: GAUGE
+      
+      - pattern: kafka.controller<type=ControllerStats, name=(.+)><>(Count|OneMinuteRate|FiveMinuteRate|FifteenMinuteRate|MeanRate|Mean|Max|Min)
+        name: kafka_controller_controllerstats_$1_$2
+        type: GAUGE
+      
+      - pattern: kafka.controller<type=ControllerChannelManager, name=(.+)><>(Value|Count)
+        name: kafka_controller_controllerchannelmanager_$1_$2
+        type: GAUGE
+      
+      # ====================
+      # LOG METRICS
+      # ====================
+      
+      # Per-topic log metrics
+      - pattern: kafka.log<type=Log, name=(.+), topic=(.+), partition=(.+)><>(Value|Count)
+        name: kafka_log_log_$1_$4
+        type: GAUGE
         labels:
           topic: "$2"
+          partition: "$3"
+      
+      # Log cleaner metrics
+      - pattern: kafka.log<type=LogCleaner, name=(.+)><>(Value|OneMinuteRate|FiveMinuteRate|FifteenMinuteRate|MeanRate)
+        name: kafka_log_logcleaner_$1_$2
+        type: GAUGE
+      
+      - pattern: kafka.log<type=LogCleanerManager, name=(.+)><>(Value|OneMinuteRate)
+        name: kafka_log_logcleanermanager_$1_$2
+        type: GAUGE
+      
+      # Log flush stats
+      - pattern: kafka.log<type=LogFlushStats, name=(.+)><>(Count|OneMinuteRate|FiveMinuteRate|FifteenMinuteRate|MeanRate|Mean|Max|Min)
+        name: kafka_log_logflushstats_$1_$2
+        type: GAUGE
+      
+      # ====================
+      # PARTITION METRICS
+      # ====================
+      
+      - pattern: kafka.cluster<type=Partition, name=(.+), topic=(.+), partition=(.+)><>(Value)
+        name: kafka_cluster_partition_$1_$4
+        type: GAUGE
+        labels:
+          topic: "$2"
+          partition: "$3"
+      
+      # ====================
+      # GROUP COORDINATOR
+      # ====================
+      
+      - pattern: kafka.coordinator.group<type=GroupMetadataManager, name=(.+)><>(Value|OneMinuteRate|FiveMinuteRate|FifteenMinuteRate|MeanRate)
+        name: kafka_coordinator_group_groupmetadatamanager_$1_$2
+        type: GAUGE
+      
+      # ====================
+      # TRANSACTION COORDINATOR
+      # ====================
+      
+      - pattern: kafka.coordinator.transaction<type=TransactionCoordinator, name=(.+)><>(Value|OneMinuteRate|FiveMinuteRate|FifteenMinuteRate|MeanRate)
+        name: kafka_coordinator_transaction_transactioncoordinator_$1_$2
+        type: GAUGE
+      
+      - pattern: kafka.coordinator.transaction<type=TransactionMarkerChannelManager, name=(.+)><>(Value|Count)
+        name: kafka_coordinator_transaction_transactionmarkerchannelmanager_$1_$2
+        type: GAUGE
+      
+      # ====================
+      # NETWORK PROCESSOR
+      # ====================
+      
+      - pattern: kafka.network<type=Processor, name=(.+), networkProcessor=(.+)><>(Value|Count|OneMinuteRate)
+        name: kafka_network_processor_$1_$3
+        type: GAUGE
+        labels:
+          network_processor: "$2"
+      
+      # ====================
+      # REQUEST CHANNEL
+      # ====================
+      
+      - pattern: kafka.network<type=RequestChannel, name=(.+)><>(Value|Count)
+        name: kafka_network_requestchannel_$1_$2
+        type: GAUGE
+      
+      # ====================
+      # SOCKET SERVER
+      # ====================
+      
+      - pattern: kafka.network<type=SocketServer, name=(.+)><>(Value|Count|OneMinuteRate)
+        name: kafka_network_socketserver_$1_$2
+        type: GAUGE
+      
+      # ====================
+      # DELAYED OPERATIONS
+      # ====================
+      
+      - pattern: kafka.server<type=DelayedOperationPurgatory, name=(.+), delayedOperation=(.+)><>(Value)
+        name: kafka_server_delayedoperationpurgatory_$1_value
+        type: GAUGE
+        labels:
+          delayed_operation: "$2"
+      
+      # ====================
+      # FETCH SESSION CACHE
+      # ====================
+      
+      - pattern: kafka.server<type=FetchSessionCache, name=(.+)><>(Value|Count)
+        name: kafka_server_fetchsessioncache_$1_$2
+        type: GAUGE
+      
+      # ====================
+      # ZK CLIENT METRICS
+      # ====================
+      
+      - pattern: kafka.server<type=SessionExpireListener, name=(.+)><>(Count|OneMinuteRate)
+        name: kafka_server_sessionexpirelistener_$1_$2
+        type: GAUGE
+      
+      - pattern: kafka.server<type=ZooKeeperClientMetrics, name=(.+)><>(Value|OneMinuteRate|Mean|Max|Min)
+        name: kafka_server_zookeeperclientmetrics_$1_$2
+        type: GAUGE
+      
+      # ====================
+      # QUOTA METRICS
+      # ====================
+      
+      - pattern: kafka.server<type=(Produce|Fetch|Request), name=(.+), user=(.+), client-id=(.+)><>(Value|OneMinuteRate)
+        name: kafka_server_quota_$1_$2_$5
+        type: GAUGE
+        labels:
+          user: "$3"
+          client_id: "$4"
+      
+      # ====================
+      # KAFKA SERVER METRICS
+      # ====================
+      
+      - pattern: kafka.server<type=KafkaServer, name=(.+)><>(Value|Count)
+        name: kafka_server_kafkaserver_$1_$2
+        type: GAUGE
+      
+      # ====================
+      # APP INFO
+      # ====================
+      
+      - pattern: kafka.server<type=app-info, id=(.+)><>start-time-ms
+        name: kafka_server_app_info_start_time_ms
+        type: GAUGE
+        labels:
+          id: "$1"
+      
+      - pattern: kafka.server<type=app-info, id=(.+)><>(commit-id|version)
+        name: kafka_server_app_info
+        type: GAUGE
+        value: 1
+        labels:
+          id: "$1"
+          $2: "$3"
+      
+      # ====================
+      # CATCH-ALL PATTERNS (use cautiously - can generate many metrics)
+      # ====================
+      
+      # Uncomment to capture any remaining kafka.server metrics
+      # - pattern: kafka.server<type=(.+), name=(.+), (.+)=(.+), (.+)=(.+)><>(.+)
+      #   name: kafka_server_$1_$2_$7
+      #   labels:
+      #     "$3": "$4"
+      #     "$5": "$6"
+      
+      # Uncomment to capture any remaining kafka metrics (WARNING: can be very large)
+      # - pattern: kafka.(.+)<type=(.+), name=(.+)><>(Value|Count|OneMinuteRate|Mean)
+      #   name: kafka_$1_$2_$3_$4
